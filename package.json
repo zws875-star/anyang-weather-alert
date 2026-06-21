@@ -1,0 +1,14 @@
+{
+  "name": "anyang-weather-alert",
+  "version": "1.0.0",
+  "description": "安阳市区天气预警监控 - 每小时检查红/橙预警，通过飞书发送提醒",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "cheerio": "^1.0.0-rc.12"
+  }
+}
