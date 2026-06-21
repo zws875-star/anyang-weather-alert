@@ -6,7 +6,7 @@ import fetch from 'node-fetch';
 
 const CONFIG = {
   FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
-  FEISHU_APP_SECRET: *** || '',
+  FEISHU_APP_SECRET: process.env.FEISHU_APP_SECRET || '',
   USER_OPEN_ID: process.env.FEISHU_USER_OPEN_ID || '',
   TEST_MODE: process.env.TEST_MODE === 'true',
   
