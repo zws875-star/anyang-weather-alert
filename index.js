@@ -74,7 +74,10 @@ async function sendHealthCheck(token) {
 async function checkWeatherAlerts() {
   const url = `https://weather.cma.cn/api/now/${CONFIG.ANYANG_STATION_ID}`;
   const resp = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0' },
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+      'Accept': 'application/json',
+    },
   });
   const data = await resp.json();
 
