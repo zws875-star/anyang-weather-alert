@@ -257,6 +257,16 @@ async function main() {
       console.log('\n✅ 预警消息发送完毕');
     } else {
       console.log('\n✅ 安阳市区当前无红色/橙色预警，无需发送消息');
+      
+      // 每日 20:00 发送健康检查通知
+      const now = new Date();
+      const beijingHour = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })).getHours();
+      if (beijingHour === 20) {
+        console.log('\n🕐 每日健康检查时间（20:00），发送平安通知...');
+        const healthMessage = '🌤【安阳市区天气监控日报】\n\n今日一切正常，当前无红色/橙色预警。\n\n✅ 监控服务运行正常\n✅ 下次检查时间：明日整点\n\n如果天气有变，我会第一时间通知你。';
+        await sendFeishuMessage(token, healthMessage, 1);
+        console.log('健康检查通知发送完成');
+      }
     }
 
   } catch (error) {
