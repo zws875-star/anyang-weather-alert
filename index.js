@@ -2,7 +2,7 @@
 // 数据来源：中国气象局 (CMA) 官方 API
 // https://weather.cma.cn/api/now/53898 (安阳站)
 
-import fetch from 'node-fetch';
+// Node.js 18+ has native fetch
 
 const CONFIG = {
   FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
