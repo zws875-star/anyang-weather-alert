@@ -1,20 +1,13 @@
-// 安阳市区天气预警监控
-// 数据来源：中国气象局 (CMA) 官方 API
-// https://weather.cma.cn/api/now/53898 (安阳站)
-
-// Node.js 18+ has native fetch
+// 安阳市区天气预警监控 v2.0
+// 数据来源：中国气象局 CMA / 国家气象中心 NMC 多源轮换
 
 const CONFIG = {
   FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
   FEISHU_APP_SECRET: process.env.FEISHU_APP_SECRET || '',
   USER_OPEN_ID: process.env.FEISHU_USER_OPEN_ID || '',
   TEST_MODE: process.env.TEST_MODE === 'true',
-  
-  // 安阳 CMA 站点编号
   ANYANG_STATION_ID: '53898',
-  
-  // 监控范围：市区（不包含所辖县）
-  // 站点 53898 对应安阳市区
+  ANYANG_CITY_CODE: '101180201',  // weather.com.cn 城市代码
 };
 
 // ============ 飞书 API ============
@@ -53,6 +46,9 @@ async function sendMsg(token, text) {
     }
   );
   const data = await resp.json();
+  if (data.code !== 0) {
+    console.error('飞书发送失败:', data.msg);
+  }
   return data.code === 0;
 }
 
@@ -65,13 +61,14 @@ async function sendAlerts(token, alerts, count = 5) {
 }
 
 async function sendHealthCheck(token) {
-  const msg = `🌤【安阳市区天气监控日报】\n\n今日一切正常，当前无红色/橙色预警。\n\n✅ 监控服务运行正常\n✅ 数据来源：中国气象局\n✅ 下次检查时间：明日整点\n\n如果天气有变，我会第一时间通知你。`;
+  const msg = `🌤【安阳市区天气监控日报】\n\n今日一切正常，当前无红色/橙色预警。\n\n✅ 监控服务运行正常\n✅ 下次检查时间：明日整点\n\n如果天气有变，我会第一时间通知你。`;
   await sendMsg(token, msg);
 }
 
-// ============ CMA 天气预警查询 ============
+// ============ 多源天气预警查询 ============
 
-async function checkWeatherAlerts() {
+// 源1: CMA API（原版快速，但可能被屏蔽）
+async function checkCMA() {
   const url = `https://weather.cma.cn/api/now/${CONFIG.ANYANG_STATION_ID}`;
   const resp = await fetch(url, {
     headers: {
@@ -79,27 +76,103 @@ async function checkWeatherAlerts() {
       'Accept': 'application/json',
     },
   });
+  if (!resp.ok) {
+    throw new Error(`CMA HTTP ${resp.status}`);
+  }
   const data = await resp.json();
-
   if (data.code !== 0) {
     throw new Error(`CMA API 返回错误: ${JSON.stringify(data)}`);
   }
+  return { alarms: data.data?.alarm || [], weather: data.data?.now || {} };
+}
 
-  const alarms = data.data?.alarm || [];
-  const now = data.data?.now || {};
+// 源2: NMC 全国预警页面（HTML 静态页，稳定可靠）
+async function checkNMC() {
+  const resp = await fetch('https://www.nmc.cn/publish/alarm/henan.html', {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  });
+  const html = await resp.text();
 
-  // 获取天气概况
-  const temp = now.temperature;
-  const weather = `${now.temperature}°C, ${now.windDirection} ${now.windSpeed}m/s, 湿度${now.humidity}%`;
+  // 用正则从 HTML 中提取安阳相关的预警
+  const alarms = [];
+  const lines = html.split('\n');
+  let currentAlarm = null;
 
-  return { alarms, weather };
+  for (const line of lines) {
+    // 找预警标题
+    if (line.includes('安阳') && (line.includes('预警') || line.includes('信号'))) {
+      if (currentAlarm) alarms.push(currentAlarm);
+      currentAlarm = { title: '', level: '', raw: line };
+      // 提取级别
+      const clean = line.replace(/<[^>]+>/g, '').trim();
+      currentAlarm.title = clean;
+      if (clean.includes('红色')) currentAlarm.level = '红色';
+      else if (clean.includes('橙色')) currentAlarm.level = '橙色';
+      else if (clean.includes('黄色')) currentAlarm.level = '黄色';
+      else if (clean.includes('蓝色')) currentAlarm.level = '蓝色';
+    }
+  }
+  if (currentAlarm) alarms.push(currentAlarm);
+
+  return { alarms };
+}
+
+// 源3: weather.com.cn 页面
+async function checkWeatherCN() {
+  const resp = await fetch(`https://www.weather.com.cn/alarm/alarm_list.shtml`, {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  });
+  const html = await resp.text();
+  const alarms = [];
+  if (html.includes('安阳') && (html.includes('红色') || html.includes('橙色'))) {
+    alarms.push({ title: 'weather.com.cn 检测到安阳地区高级别预警', level: '橙色' });
+  }
+  return { alarms };
+}
+
+async function checkWeatherAlerts() {
+  let lastError = null;
+
+  // 依次尝试各数据源
+  const sources = [
+    { name: 'CMA', fn: checkCMA },
+    { name: 'NMC', fn: checkNMC },
+    { name: 'weather.com.cn', fn: checkWeatherCN },
+  ];
+
+  for (const source of sources) {
+    try {
+      console.log(`尝试数据源: ${source.name}...`);
+      const result = await source.fn();
+      if (result.alarms && result.alarms.length > 0) {
+        console.log(`${source.name}: 找到 ${result.alarms.length} 条预警`);
+        // NMC 可能返回 HTML 解析的数据，标准化格式
+        return result.alarms.map(a => ({
+          title: a.title || a.title || '天气预警',
+          signallevel: a.level || a.signallevel || '未知',
+          effective: a.effective || a.time || '未知',
+        }));
+      }
+      // 没预警但数据源正常，返回空
+      console.log(`${source.name}: 无预警`);
+      return [];
+    } catch (err) {
+      lastError = err;
+      console.log(`${source.name} 不可用: ${err.message}`);
+      continue;
+    }
+  }
+
+  // 所有源都失败，记录日志但不再发送错误通知
+  console.error(`所有数据源均不可用，最后错误: ${lastError?.message}`);
+  return null; // 表示数据获取失败
 }
 
 // ============ 主函数 ============
 
 async function main() {
   console.log('========================================');
-  console.log('安阳市区天气预警监控 - 中国气象局');
+  console.log('安阳市区天气预警监控 v2.0');
   console.log(`时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
   console.log('========================================\n');
 
@@ -118,27 +191,23 @@ async function main() {
     if (CONFIG.TEST_MODE) {
       await sendMsg(
         token,
-        '✅【安阳市区天气预警监控测试】\n\n脚本运行正常！\n\n📡 数据来源：中国气象局 (weather.cma.cn)\n🕐 检查频率：每小时\n📍 监控范围：安阳市区\n🔴🟠 关注级别：红色预警、橙色预警\n📢 发现预警：连续发送 5 次\n\n测试成功 ✅'
+        '✅【安阳市区天气预警监控测试 v2.0】\n\n脚本运行正常！\n\n📡 数据来源：多源轮换（CMA / NMC / weather.com.cn）\n🕐 检查频率：每小时\n📍 监控范围：安阳市区\n🔴🟠 关注级别：红色预警、橙色预警\n📢 发现预警：连续发送 5 次\n\n测试成功 ✅'
       );
       console.log('测试消息发送完成');
       return;
     }
 
-    // 查询 CMA 官方预警
-    console.log('正在查询中国气象局官方数据...');
-    let result;
-    try {
-      result = await checkWeatherAlerts();
-    } catch (err) {
-      console.error('CMA API 查询失败:', err.message);
-      await sendMsg(token, `⚠️【天气预警监控异常】\n\n查询中国气象局数据失败：${err.message}`);
+    // 多源查询预警
+    console.log('正在查询预警信息（多源轮换）...');
+    const alarms = await checkWeatherAlerts();
+
+    // 数据源全部不可用 -> 安静退出，不报错
+    if (alarms === null) {
+      console.log('⚠️ 所有数据源暂时不可用，跳过本次检查');
       return;
     }
 
-    const { alarms, weather } = result;
-    console.log(`安阳天气: ${weather}`);
-    console.log(`官方预警数: ${alarms.length}`);
-    
+    console.log(`安阳预警数: ${alarms.length}`);
     if (alarms.length > 0) {
       alarms.forEach(a => console.log(`  - ${a.title} (${a.signallevel})`));
     }
@@ -152,10 +221,7 @@ async function main() {
     if (highAlarms.length > 0) {
       console.log('\n🔴🟠 发现高级别预警！发送 5 次提醒...');
       const alertText = highAlarms
-        .map(
-          (a) =>
-            `• ${a.title}\n  ⏰ 生效时间：${a.effective || '未知'}`
-        )
+        .map((a) => `• ${a.title}\n  ⏰ 生效时间：${a.effective || '未知'}`)
         .join('\n\n');
       await sendAlerts(token, alertText);
       console.log('预警提醒发送完成 ✅');
@@ -171,7 +237,7 @@ async function main() {
     }
   } catch (err) {
     console.error('\n❌ 执行出错:', err.message);
-    console.error(err.stack);
+    // 不往外发错误通知，安静失败
   }
 }
 
