@@ -1,6 +1,6 @@
-// 安阳市区天气预警监控 v2.1
+// 安阳市区天气预警监控 v2.2
 // 数据来源：中国气象局 CMA / 国家气象中心 NMC 多源轮换
-// 新增：明确支持高温红/橙预警检测
+// 新增：明确支持高温红/橙预警检测 + 预警变化时才发送（避免重复打扰）
 
 const CONFIG = {
   FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
@@ -10,6 +10,32 @@ const CONFIG = {
   ANYANG_STATION_ID: '53898',
   ANYANG_CITY_CODE: '101180201',  // weather.com.cn 城市代码
 };
+
+// ============ 状态持久化（避免同一预警重复发送） ============
+import fs from 'fs';
+
+function getAlarmSignature(alarms) {
+  return alarms
+    .map((a) => `${a.title}|${a.signallevel}`)
+    .sort()
+    .join('||');
+}
+
+function loadLastSignature() {
+  try {
+    return fs.readFileSync('/tmp/last_anyang_alarms.json', 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+function saveLastSignature(sig) {
+  try {
+    fs.writeFileSync('/tmp/last_anyang_alarms.json', sig);
+  } catch (e) {
+    console.error('保存预警状态失败:', e.message);
+  }
+}
 
 // ============ 飞书 API ============
 
@@ -222,14 +248,24 @@ async function main() {
       return isHighLevel || isHighTemp;
     });
 
+    const currentSig = getAlarmSignature(highAlarms);
+    const lastSig = loadLastSignature();
+
     if (highAlarms.length > 0) {
-      console.log('\n🔴🟠 发现高级别预警！发送 1 次提醒...');
-      const alertText = highAlarms
-        .map((a) => `• ${a.title}\n  ⏰ 生效时间：${a.effective || '未知'}`)
-        .join('\n\n');
-      await sendAlerts(token, alertText);
-      console.log('预警提醒发送完成 ✅');
+      if (currentSig !== lastSig) {
+        console.log('\n🔴🟠 发现新的或升级的高级别预警！发送 5 次提醒...');
+        const alertText = highAlarms
+          .map((a) => `• ${a.title}\n  ⏰ 生效时间：${a.effective || '未知'}`)
+          .join('\n\n');
+        await sendAlerts(token, alertText);
+        saveLastSignature(currentSig);
+        console.log('预警提醒发送完成 ✅');
+      } else {
+        console.log('⚠️ 相同预警已通知过，本次跳过重复发送（避免打扰）');
+      }
     } else {
+      // 无预警时清空状态
+      if (lastSig) saveLastSignature('');
       console.log('\n✅ 无红色/橙色预警');
       if (hour === 20) {
         console.log('每日 20:00 发送日报...');
