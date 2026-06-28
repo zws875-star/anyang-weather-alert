@@ -253,11 +253,11 @@ async function main() {
 
     if (highAlarms.length > 0) {
       if (currentSig !== lastSig) {
-        console.log('\n🔴🟠 发现新的或升级的高级别预警！发送 5 次提醒...');
+        console.log('\n🔴🟠 发现新的或升级的高级别预警！发送提醒...');
         const alertText = highAlarms
           .map((a) => `• ${a.title}\n  ⏰ 生效时间：${a.effective || '未知'}`)
           .join('\n\n');
-        await sendAlerts(token, alertText);
+        await sendAlerts(token, alertText, 1);
         saveLastSignature(currentSig);
         console.log('预警提醒发送完成 ✅');
       } else {
