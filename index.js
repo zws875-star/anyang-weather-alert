@@ -53,7 +53,7 @@ async function sendMsg(token, text) {
   return data.code === 0;
 }
 
-async function sendAlerts(token, alerts, count = 5) {
+async function sendAlerts(token, alerts, count = 1) {
   const msg = `🚨【安阳市区高级别气象预警提醒】🚨\n\n${alerts}\n\n⚠️ 请做好防范准备，注意安全！`;
   for (let i = 1; i <= count; i++) {
     await sendMsg(token, `${msg}\n[消息 ${i}/${count}]`);
@@ -192,7 +192,7 @@ async function main() {
     if (CONFIG.TEST_MODE) {
       await sendMsg(
         token,
-        '✅【安阳市区天气预警监控测试 v2.0】\n\n脚本运行正常！\n\n📡 数据来源：多源轮换（CMA / NMC / weather.com.cn）\n🕐 检查频率：每小时\n📍 监控范围：安阳市区\n🔴🟠 关注级别：红色预警、橙色预警\n📢 发现预警：连续发送 5 次\n\n测试成功 ✅'
+        '✅【安阳市区天气预警监控测试 v2.0】\n\n脚本运行正常！\n\n📡 数据来源：多源轮换（CMA / NMC / weather.com.cn）\n🕐 检查频率：每小时\n📍 监控范围：安阳市区\n🔴🟠 关注级别：红色预警、橙色预警\n📢 发现预警：发送 1 次\n\n测试成功 ✅'
       );
       console.log('测试消息发送完成');
       return;
@@ -223,7 +223,7 @@ async function main() {
     });
 
     if (highAlarms.length > 0) {
-      console.log('\n🔴🟠 发现高级别预警！发送 5 次提醒...');
+      console.log('\n🔴🟠 发现高级别预警！发送 1 次提醒...');
       const alertText = highAlarms
         .map((a) => `• ${a.title}\n  ⏰ 生效时间：${a.effective || '未知'}`)
         .join('\n\n');
