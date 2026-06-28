@@ -1,5 +1,6 @@
-// 安阳市区天气预警监控 v2.0
+// 安阳市区天气预警监控 v2.1
 // 数据来源：中国气象局 CMA / 国家气象中心 NMC 多源轮换
+// 新增：明确支持高温红/橙预警检测
 
 const CONFIG = {
   FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
@@ -212,10 +213,13 @@ async function main() {
       alarms.forEach(a => console.log(`  - ${a.title} (${a.signallevel})`));
     }
 
-    // 只关注红色和橙色预警
+    // 只关注红色和橙色预警（含高温红/橙）
     const highAlarms = alarms.filter((a) => {
       const level = (a.signallevel || a.severity || '').toLowerCase();
-      return level.includes('红') || level === 'red' || level === 'orange' || level.includes('橙');
+      const title = (a.title || '').toLowerCase();
+      const isHighLevel = level.includes('红') || level === 'red' || level === 'orange' || level.includes('橙');
+      const isHighTemp = title.includes('高温');
+      return isHighLevel || isHighTemp;
     });
 
     if (highAlarms.length > 0) {
