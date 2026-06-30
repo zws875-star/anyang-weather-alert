@@ -144,15 +144,45 @@ async function checkNMC() {
   return { alarms };
 }
 
-// 源3: weather.com.cn 页面
+// 源3: weather.com.cn product API（含 Referer 头，能过反爬）
 async function checkWeatherCN() {
-  const resp = await fetch(`https://www.weather.com.cn/alarm/alarm_list.shtml`, {
-    headers: { 'User-Agent': 'Mozilla/5.0' },
+  const resp = await fetch('https://product.weather.com.cn/alarm/grepalarm_cn.php', {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+      'Referer': 'https://www.weather.com.cn/',
+    },
   });
-  const html = await resp.text();
+  const text = await resp.text();
+  // 返回格式: var alarminfo={"count":"...","data":[[...],...]}
+  const match = text.match(/alarminfo\s*=\s*(\{.*\})/);
+  if (!match) {
+    throw new Error('weather.com.cn 返回格式异常');
+  }
+  const data = JSON.parse(match[1]);
   const alarms = [];
-  if (html.includes('安阳') && (html.includes('红色') || html.includes('橙色'))) {
-    alarms.push({ title: 'weather.com.cn 检测到安阳地区高级别预警', level: '橙色' });
+  if (data.data && Array.isArray(data.data)) {
+    const anyangCodes = CONFIG.ANYANG_CITY_CODE;
+    for (const item of data.data) {
+      // item = [名称, 文件ID, lng, lat, 发布单位ID, 更新ID, 预警标题]
+      const title = item[6] || '';
+      const region = item[0] || '';
+      const fileId = item[1] || '';
+      // 匹配安阳市区（不含所辖县）
+      // anyang city code 101180201 对应 fileId 中以 1011802 开头的
+      if (fileId.startsWith('1011802') && !item[1].match(/10118020[3-5]/)) {
+        // 只关注安阳市区，排除所辖县
+        let level = '未知';
+        if (title.includes('红色')) level = '红色';
+        else if (title.includes('橙色')) level = '橙色';
+        else if (title.includes('黄色')) level = '黄色';
+        else if (title.includes('蓝色')) level = '蓝色';
+        alarms.push({
+          title,
+          level,
+          effective: fileId.split('-')[1] || '未知',
+        });
+      }
+    }
   }
   return { alarms };
 }
@@ -162,9 +192,8 @@ async function checkWeatherAlerts() {
 
   // 依次尝试各数据源
   const sources = [
-    { name: 'CMA', fn: checkCMA },
-    { name: 'NMC', fn: checkNMC },
     { name: 'weather.com.cn', fn: checkWeatherCN },
+    { name: 'NMC', fn: checkNMC },
   ];
 
   for (const source of sources) {
@@ -190,9 +219,9 @@ async function checkWeatherAlerts() {
     }
   }
 
-  // 所有源都失败，记录日志但不再发送错误通知
+  // 所有源都失败
   console.error(`所有数据源均不可用，最后错误: ${lastError?.message}`);
-  return null; // 表示数据获取失败
+  return { alarms: [], sourceError: lastError?.message || '未知' }; // 返回空+错误信息
 }
 
 // ============ 主函数 ============
@@ -228,10 +257,9 @@ async function main() {
     console.log('正在查询预警信息（多源轮换）...');
     const alarms = await checkWeatherAlerts();
 
-    // 数据源全部不可用 -> 安静退出，不报错
-    if (alarms === null) {
-      console.log('⚠️ 所有数据源暂时不可用，跳过本次检查');
-      return;
+    // 数据源全部不可用
+    if (alarms.sourceError) {
+      console.log(`⚠️ 所有数据源暂时不可用: ${alarms.sourceError}，继续处理日报逻辑`);
     }
 
     console.log(`安阳预警数: ${alarms.length}`);
@@ -267,13 +295,19 @@ async function main() {
       // 无预警时清空状态
       if (lastSig) saveLastSignature('');
       console.log('\n✅ 无红色/橙色预警');
-      if (hour === 20) {
-        console.log('每日 20:00 发送日报...');
-        await sendHealthCheck(token);
-        console.log('日报发送完成 ✅');
+    }
+    // 日报逻辑：无论是否有预警，每天 20:00 发送日报
+    // 即使数据源全挂也发送（标注不可用状态）
+    if (hour === 20) {
+      console.log('每日 20:00 发送日报...');
+      if (alarms.sourceError) {
+        await sendMsg(token, `⚠️【安阳市区天气监控日报】\n\n今日数据源不可用：${alarms.sourceError}\n\n⚡ 请留意，当前气象预警系统正在排查中，建议直接查看天气预报。`);
       } else {
-        console.log('非日报时间，安静跳过');
+        await sendHealthCheck(token);
       }
+      console.log('日报发送完成 ✅');
+    } else {
+      console.log('非日报时间，安静跳过');
     }
   } catch (err) {
     console.error('\n❌ 执行出错:', err.message);
