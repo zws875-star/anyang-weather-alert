@@ -37,6 +37,22 @@ function saveLastSignature(sig) {
   }
 }
 
+function loadPrevHighCount() {
+  try {
+    return parseInt(fs.readFileSync('/tmp/prev_high_count.json', 'utf8').trim(), 10);
+  } catch {
+    return 0;
+  }
+}
+
+function savePrevHighCount(count) {
+  try {
+    fs.writeFileSync('/tmp/prev_high_count.json', String(count));
+  } catch (e) {
+    console.error('保存预警计数失败:', e.message);
+  }
+}
+
 // ============ 飞书 API ============
 
 async function getFeishuToken() {
@@ -279,6 +295,8 @@ async function main() {
     const currentSig = getAlarmSignature(highAlarms);
     const lastSig = loadLastSignature();
 
+    const prevHighCount = loadPrevHighCount();
+    
     if (highAlarms.length > 0) {
       if (currentSig !== lastSig) {
         console.log('\n🔴🟠 发现新的或升级的高级别预警！发送提醒...');
@@ -287,13 +305,21 @@ async function main() {
           .join('\n\n');
         await sendAlerts(token, alertText, 1);
         saveLastSignature(currentSig);
+        savePrevHighCount(highAlarms.length);
         console.log('预警提醒发送完成 ✅');
       } else {
-        console.log('⚠️ 相同预警已通知过，本次跳过重复发送（避免打扰）');
+        console.log('⚠️ 相同预警已通知过，本次跳过重复发送');
       }
     } else {
+      // 之前有高级别预警，现在全部解除 -> 发解除通知
+      if (prevHighCount > 0) {
+        console.log('\n✅ 红色/橙色预警已全部解除，发送解除提醒...');
+        await sendMsg(token, `✅【安阳市区天气预警解除】\n\n之前发布的红色/橙色预警已全部降级或解除。\n\n🕐 解除检测时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
+        console.log('解除提醒发送完成 ✅');
+      }
       // 无预警时清空状态
       if (lastSig) saveLastSignature('');
+      savePrevHighCount(0);
       console.log('\n✅ 无红色/橙色预警');
     }
     // 日报逻辑：无论是否有预警，每天 20:00 发送日报
