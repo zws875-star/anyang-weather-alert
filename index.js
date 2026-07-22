@@ -1,13 +1,36 @@
-// 安阳市区天气预警监控 v3.0
+// 安阳市区天气预警监控 v3.1
 // 单数据源：weather.com.cn product API
-// 每10分钟检测，发现红/橙预警立即发送（不去重）
+// 每10分钟检测，发现红/橙预警立即推送（按预警发布时间去重）
+
+import fs from 'fs';
 
 const CONFIG = {
   FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
-  FEISHU_APP_SECRET: process.env.FEISHU_APP_SECRET || '',
+  FEISHU_APP_SECRET: proces…CRET || '',
   USER_OPEN_ID: process.env.FEISHU_USER_OPEN_ID || '',
   ANYANG_CITY_CODE: '1011802', // 安阳市（含市区及所辖县）
 };
+
+// ============ 去重持久化 ============
+
+const STATE_FILE = '/tmp/notified_alerts.json';
+
+function loadNotified() {
+  try {
+    const raw = fs.readFileSync(STATE_FILE, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function saveNotified(ids) {
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify(ids));
+  } catch (e) {
+    console.error('保存状态失败:', e.message);
+  }
+}
 
 // ============ 飞书 API ============
 
@@ -64,7 +87,6 @@ async function checkWeatherAlerts() {
     }
   );
   const text = await resp.text();
-  // 返回格式: var alarminfo={"count":"...","data":[[...],...]}
   const match = text.match(/alarminfo\s*=\s*(\{.*\})/);
   if (!match) {
     throw new Error('weather.com.cn 返回格式异常');
@@ -73,12 +95,9 @@ async function checkWeatherAlerts() {
   const alarms = [];
   if (data.data && Array.isArray(data.data)) {
     for (const item of data.data) {
-      // item = [地区名称, 文件ID, lng, lat, ..., 发布单位ID, 更新ID, 预警标题]
-      const regionName = item[0] || '';
       const fileId = item[1] || '';
       const title = item[6] || '';
 
-      // 匹配安阳市（code 1011802 开头）
       if (fileId.startsWith('1011802')) {
         let level = '未知';
         if (title.includes('红色')) level = '红色';
@@ -86,19 +105,17 @@ async function checkWeatherAlerts() {
         else if (title.includes('黄色')) level = '黄色';
         else if (title.includes('蓝色')) level = '蓝色';
 
+        // 从 fileId 提取发布时间作为唯一标识
+        // 格式: 1011802-20260722203000-5203.html
+        const parts = fileId.split('-');
+        const publishTime = parts[1] || '';
+
         alarms.push({
-          region: regionName,
-          title: title,
-          level: level,
-          effective: fileId.split('-')[1] || '未知',
-          type: title.includes('暴雨') ? '暴雨' :
-                title.includes('雷暴大风') ? '雷暴大风' :
-                title.includes('雷雨大风') ? '雷雨大风' :
-                title.includes('冰雹') ? '冰雹' :
-                title.includes('强对流') ? '强对流' :
-                title.includes('高温') ? '高温' :
-                title.includes('台风') ? '台风' :
-                title.includes('雷电') ? '雷电' : '其他',
+          region: item[0] || '',
+          title,
+          level,
+          publishTime,
+          fileId,
         });
       }
     }
@@ -110,7 +127,7 @@ async function checkWeatherAlerts() {
 
 async function main() {
   console.log('========================================');
-  console.log('安阳市区天气预警监控 v3.0');
+  console.log('安阳市区天气预警监控 v3.1');
   console.log(`时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
   console.log('========================================\n');
 
@@ -123,41 +140,55 @@ async function main() {
     const token = await getFeishuToken();
     console.log('飞书 token 获取成功 ✅\n');
 
-    if (process.env.TEST_MODE === 'true') {
-      await sendMsg(
-        token,
-        '✅【安阳市区天气预警监控 v3.0】\n\n脚本运行正常！\n\n📡 数据来源：weather.com.cn\n🕐 检查频率：每 10 分钟\n📍 监控范围：安阳市（含所辖县）\n🔴🟠 关注级别：红色预警、橙色预警\n📢 有预警即立即推送给您\n\n测试成功 ✅'
-      );
-      console.log('测试消息发送完成');
-      return;
-    }
-
     // 查询预警
     console.log('正在查询预警信息...');
     const alarms = await checkWeatherAlerts();
     console.log(`安阳报警数量: ${alarms.length}`);
 
     if (alarms.length > 0) {
-      alarms.forEach(a => console.log(`  - ${a.title} (${a.level})`));
+      alarms.forEach(a => console.log(`  - ${a.title} | 发布: ${a.publishTime}`));
     }
 
     // 只关注红色和橙色预警
     const highAlarms = alarms.filter((a) => a.level === '红色' || a.level === '橙色');
 
-    if (highAlarms.length > 0) {
-      console.log(`\n🔴🟠 检测到 ${highAlarms.length} 条红/橙预警，立即推送...`);
-
-      const alertText = highAlarms
-        .map((a) => `• ${a.title}\n  🕐 发布：${a.effective || '未知'}`)
-        .join('\n\n');
-
-      const msg = `🚨【安阳天气预警】🚨\n\n${alertText}\n\n⚠️ 请做好防范准备，注意安全！\n\n🕐 检测时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-
-      await sendMsg(token, msg);
-      console.log('预警推送完成 ✅');
-    } else {
+    if (highAlarms.length === 0) {
       console.log('✅ 当前无红色/橙色预警');
+      return;
     }
+
+    // 去重：只推送未被通知过的新预警（按发布时间区分）
+    const notified = loadNotified();
+    const newAlarms = highAlarms.filter((a) => !notified[a.publishTime]);
+
+    if (newAlarms.length === 0) {
+      console.log('⚠️ 未发现新发布的预警（已有预警已通知过），跳过');
+      return;
+    }
+
+    console.log(`\n🔴🟠 检测到 ${newAlarms.length} 条新发布红/橙预警，立即推送...`);
+
+    const alertText = newAlarms
+      .map((a) => {
+        const timeStr = a.publishTime
+          ? `${a.publishTime.slice(0,4)}-${a.publishTime.slice(4,6)}-${a.publishTime.slice(6,8)} ${a.publishTime.slice(8,10)}:${a.publishTime.slice(10,12)}`
+          : '未知';
+        return `• ${a.title}\n  🕐 发布：${timeStr}`;
+      })
+      .join('\n\n');
+
+    const msg = `🚨【安阳天气预警】🚨\n\n${alertText}\n\n⚠️ 请做好防范准备，注意安全！`;
+
+    await sendMsg(token, msg);
+    console.log('预警推送完成 ✅');
+
+    // 记录已通知的预警
+    const updated = { ...notified };
+    for (const a of newAlarms) {
+      updated[a.publishTime] = true;
+    }
+    saveNotified(updated);
+
   } catch (err) {
     console.error('\n❌ 执行出错:', err.message);
   }
