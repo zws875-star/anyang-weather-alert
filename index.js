@@ -6,7 +6,7 @@ import fs from 'fs';
 
 const CONFIG = {
   FEISHU_APP_ID: process.env.FEISHU_APP_ID || '',
-  FEISHU_APP_SECRET: proces…CRET || '',
+  FEISHU_APP_SECRET: process.env.FEISHU_APP_SECRET || '',
   USER_OPEN_ID: process.env.FEISHU_USER_OPEN_ID || '',
   ANYANG_CITY_CODE: '1011802', // 安阳市（含市区及所辖县）
 };
