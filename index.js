@@ -74,6 +74,28 @@ async function sendMsg(token, text) {
   return data.code === 0;
 }
 
+// ============ 每日 20:00 健康日报 ============
+
+async function sendDailyReport(token, lowAlarms) {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
+  const lines = [
+    '🌤【安阳天气监控日报】',
+    '',
+    `📅 ${dateStr}`,
+    '✅ 监控服务运行正常',
+    '✅ 当前无红色/橙色预警',
+  ];
+  if (lowAlarms && lowAlarms.length > 0) {
+    lines.push('', `ℹ️ 当前生效低级别预警 ${lowAlarms.length} 条:`);
+    for (const a of lowAlarms) {
+      lines.push(`   • ${a.title}`);
+    }
+  }
+  lines.push('', '🔔 每 10 分钟自动监测，有红/橙预警会第一时间推送。');
+  await sendMsg(token, lines.join('\n'));
+}
+
 // ============ 天气预警查询 ============
 
 async function checkWeatherAlerts() {
@@ -154,6 +176,19 @@ async function main() {
 
     if (highAlarms.length === 0) {
       console.log('✅ 当前无红色/橙色预警');
+
+      // 每日 20:00 发送健康日报（限定 20:00-20:09，避免每 10 分钟重复发送）
+      const now = new Date();
+      const hour = Number(now.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Shanghai' }));
+      const minute = Number(now.toLocaleString('en-US', { minute: 'numeric', timeZone: 'Asia/Shanghai' }));
+      const lowAlarms = alarms.filter((a) => a.level === '黄色' || a.level === '蓝色');
+      if (hour === 20 && minute < 10) {
+        console.log('每日 20:00 发送日报...');
+        await sendDailyReport(token, lowAlarms);
+        console.log('日报发送完成 ✅');
+      } else {
+        console.log('非日报时间，安静跳过');
+      }
       return;
     }
 
